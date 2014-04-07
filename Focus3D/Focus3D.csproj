@@ -147,7 +147,9 @@
     </Content>
     <Content Include="Icon_App.png" />
     <Content Include="Icon_Large_Blur.png" />
+    <Content Include="Icon_Shutter_Blur_Gray.png" />
     <Content Include="Icon_Small_Blur.png" />
+    <Content Include="Icon_Small_Blur_Gray.png" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\AppResources.resx">

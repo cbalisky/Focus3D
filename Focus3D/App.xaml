@@ -7,7 +7,17 @@
 
     <!--Application Resources-->
     <Application.Resources>
+        <RadialGradientBrush x:Key="CircleBG">
+            <RadialGradientBrush.RelativeTransform>
+                <CompositeTransform CenterY="0.5" CenterX="0.5"/>
+            </RadialGradientBrush.RelativeTransform>
+            <GradientStop Offset="0.895"/>
+            <GradientStop Offset="1"/>
+            <GradientStop Color="White" Offset="0.927"/>
+            <GradientStop Color="White" Offset="0.962"/>
+        </RadialGradientBrush>
         <local:LocalizedStrings xmlns:local="clr-namespace:Focus3D" x:Key="LocalizedStrings"/>
+        
     </Application.Resources>
 
     <Application.ApplicationLifetimeObjects>
@@ -16,5 +26,7 @@
             Launching="Application_Launching" Closing="Application_Closing"
             Activated="Application_Activated" Deactivated="Application_Deactivated"/>
     </Application.ApplicationLifetimeObjects>
+    
+    
 
 </Application>

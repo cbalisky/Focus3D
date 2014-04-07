@@ -12,49 +12,73 @@
     Foreground="{StaticResource PhoneForegroundBrush}"
     SupportedOrientations="Landscape" Orientation="Landscape"
     shell:SystemTray.IsVisible="False">
+    <phone:PhoneApplicationPage.Resources>
+
+        <!-- Default style for Windows.UI.Xaml.Controls.Button -->
+
+        <RadialGradientBrush x:Key="CircleBG">
+            <RadialGradientBrush.RelativeTransform>
+                <CompositeTransform CenterY="0.5" CenterX="0.5"/>
+            </RadialGradientBrush.RelativeTransform>
+            <GradientStop Offset="0.895"/>
+            <GradientStop Offset="1"/>
+            <GradientStop Color="White" Offset="0.927"/>
+            <GradientStop Color="White" Offset="0.962"/>
+        </RadialGradientBrush>
+    </phone:PhoneApplicationPage.Resources>
 
     <!--LayoutRoot is the root grid where all page content is placed-->
     <Grid x:Name="LayoutRoot" Background="Transparent">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto" MinWidth="710"/>
-            <ColumnDefinition />
+            <ColumnDefinition/>
+            <ColumnDefinition Width="115"/>
         </Grid.ColumnDefinitions>
 
         <!--Camera viewfinder >-->
-        <Rectangle Width="710" Height="480" HorizontalAlignment="Left" Grid.Column="0">
+        <Rectangle Width="800" HorizontalAlignment="Left" Grid.ColumnSpan="2">
             <Rectangle.Fill>
-                <VideoBrush x:Name="viewfinderBrush" />
+                <VideoBrush x:Name="viewfinderBrush"/>
             </Rectangle.Fill>
 
         </Rectangle>
         <!--Overlay for the viewfinder region to display grayscale WriteableBitmap objects-->
-        <Image x:Name="MainImage" 
-               Width="710" Height="480" 
+        <Image x:Name="MainImage" Grid.ColumnSpan="2"
                HorizontalAlignment="Left" VerticalAlignment="Bottom"
-               Stretch="Uniform"/>
-        <Image x:Name="MainImage2" 
-               Width="320" Height="240" 
-               HorizontalAlignment="Left" VerticalAlignment="Bottom"
-               Stretch="Uniform"/>
-        <Image x:Name="MainImage3" 
-               Width="320" Height="240" 
-               HorizontalAlignment="Left" VerticalAlignment="Bottom"  
-               Margin="390,0,0,240"
-               Stretch="Uniform"/>
-        <Image x:Name="MainImage4" 
-               Width="320" Height="240" 
-               HorizontalAlignment="Left" VerticalAlignment="Bottom"  
-               Margin="390,0,0,0"
-               Stretch="Uniform"/>
+               Stretch="UniformToFill" Width="800" Height="480"/>
+        <Button x:Name="ShutterButtonBG" Content="" Click="ShutterButton_Click" FontSize="40" FontWeight="Light" BorderThickness="0" Height="120" VerticalAlignment="Top" HorizontalAlignment="Left" Width="120" Margin="-2,188,0,0" Grid.Column="1" BorderBrush="{x:Null}" RenderTransformOrigin="0.517,0.471" Foreground="{x:Null}" Canvas.ZIndex="4" TabIndex="999999999" Padding="0" UseLayoutRounding="False" FontFamily="Segoe WP Black" HorizontalContentAlignment="Right" IsTabStop="False" IsHitTestVisible="False">
+            <Button.Background>
+                <RadialGradientBrush>
+                    <RadialGradientBrush.RelativeTransform>
+                        <CompositeTransform CenterY="0.5" CenterX="0.5"/>
+                    </RadialGradientBrush.RelativeTransform>
+                    <GradientStop Offset="0.895" Color="Transparent"/>
+                    <GradientStop Offset="1"/>
+                    <GradientStop Color="White" Offset="0.927"/>
+                    <GradientStop Color="White" Offset="0.962"/>
+                </RadialGradientBrush>
+            </Button.Background>
+        </Button>
+        <Button x:Name="ShutterButton" Content="" Click="ShutterButton_Click" FontSize="55" FontWeight="ExtraLight" BorderThickness="5" Height="100" VerticalAlignment="Top" HorizontalAlignment="Left" Width="114" Margin="0,195,0,0" Grid.Column="1" RenderTransformOrigin="0.5,0.5" Canvas.ZIndex="5" Padding="0" OpacityMask="Black" BorderBrush="{x:Null}" Foreground="{x:Null}">
+            <Button.Background>
+                <ImageBrush ImageSource="/Icon_Shutter_Blur_Gray.png" Stretch="UniformToFill">
+                    <ImageBrush.RelativeTransform>
+                        <CompositeTransform CenterY="0.5" CenterX="0.5" ScaleY="0.7" ScaleX="0.7"/>
+                    </ImageBrush.RelativeTransform>
+                </ImageBrush>
+            </Button.Background>
+        </Button>
+        <Button x:Name="ClearButton" Click="ClearButton_Click" FontSize="40" Content="X" BorderThickness="5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="115" Height="115" Grid.Column="1" Canvas.ZIndex="5" BorderBrush="{x:Null}" Background="{StaticResource CircleBG}" FontWeight="ExtraLight" RenderTransformOrigin="0.5,0.5" FontFamily="Segoe WP Light" FontStretch="ExtraExpanded" Visibility="Collapsed"/>
+
+
 
         <!--Button StackPanel to the right of viewfinder>-->
-        <StackPanel Grid.Column="1" >
+        <!--
+        <StackPanel HorizontalAlignment="Right" Width="90" Margin="0,158,0,0" Grid.Column="1"  >
             <TextBox x:Name="textBox" Height="54" Text="0" Width="72" InputScope="Number" FontSize="18" BorderThickness="1" TextAlignment="Right" MaxLength="4" LostFocus="TextBox_LostFocus" GotFocus="textBox_GotFocus" Margin="9,0"/>
-            <Slider ValueChanged="Slider_ValueChanged" Orientation="Vertical" Height="183" Maximum="1000" LargeChange="50"/>
-            <Button x:Name="ShutterButton" Content="SH" Click="ShutterButton_Click" FontSize="26" FontWeight="Bold" Height="73" BorderThickness="1" />
-            <Button x:Name="ClearButton" Click="ClearButton_Click" FontSize="26" FontWeight="Bold" Height="75" Content="X" BorderThickness="1"/>
-            <CheckBox x:Name="checkboxSave" Margin="20,0,0,0" Height="73" BorderThickness="3"/>
+            <Slider ValueChanged="Slider_ValueChanged" Orientation="Vertical" Height="183" Maximum="100" LargeChange="50"/>
+            <CheckBox x:Name="checkboxSave" Margin="20,0,0,0" Height="75" BorderThickness="3" VerticalAlignment="Bottom" VerticalContentAlignment="Bottom"/>
         </StackPanel>
+    -->
 
         <!--Used for debugging >-->
         <TextBlock Height="40" HorizontalAlignment="Left" Margin="8,428,0,0" Name="txtDebug" VerticalAlignment="Top" Width="626" FontSize="24" FontWeight="ExtraBold" />
@@ -62,3 +86,4 @@
 
 
 </phone:PhoneApplicationPage>
+    
