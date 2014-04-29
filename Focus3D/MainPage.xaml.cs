@@ -17,7 +17,6 @@ using Microsoft.Xna.Framework.Media;
 using Windows.Phone.Media.Capture;
 using System.Windows.Media.Imaging;
 using System.ComponentModel;
-using Nokia.Graphics.Imaging;
 
 namespace Focus3D
 {
@@ -35,6 +34,9 @@ namespace Focus3D
         private int[] _sharpnessMap;
         private FocusMap bufferMapNew, bufferMapOld;
         private Windows.Foundation.Size _previewFrameSize = new Windows.Foundation.Size();
+        private CaptureMode mode = CaptureMode.DepthMap;
+        public FilterMethod FilterMode = FilterMethod.Salt;
+        public int FilterSize = 1;
         private bool _running = false;
         public bool Running
         {
@@ -44,6 +46,8 @@ namespace Focus3D
             }
         }
         public enum FocusMethod { Variance, Sobel };
+        public enum CaptureMode { DepthMap, FocusSweepSave };
+        public enum FilterMethod { None, Median, Salt, Interpolation };
         // Constructor
         public MainPage()
         {
@@ -51,24 +55,42 @@ namespace Focus3D
             InitializeComponent();
 
             // Sample code to localize the ApplicationBar
-            //BuildLocalizedApplicationBar();
+            BuildLocalizedApplicationBar();
         }
 
         // Sample code for building a localized ApplicationBar
-        //private void BuildLocalizedApplicationBar()
-        //{
-        //    // Set the page's ApplicationBar to a new instance of ApplicationBar.
-        //    ApplicationBar = new ApplicationBar();
+        private void BuildLocalizedApplicationBar()
+        {
+            // Set the page's ApplicationBar to a new instance of ApplicationBar.
+            ApplicationBar = new ApplicationBar();
+            ApplicationBar.StateChanged += ApplicationBar_StateChanged;
+            // Create a new button and set the text value to the localized string from AppResources.
+            ApplicationBarIconButton appBarButton = new ApplicationBarIconButton(new Uri("/Assets/AppBar/appbar.add.rest.png", UriKind.Relative));
+            appBarButton.Text = AppResources.AppBarButtonText;
+            //ApplicationBar.Buttons.Add(appBarButton);
+            ApplicationBar.Mode = ApplicationBarMode.Minimized;
+            ApplicationBar.BackgroundColor = Color.FromArgb(0,64, 64, 64);
+            // Create a new menu item with the localized string from AppResources.
+            ApplicationBarMenuItem appBarMenuItem = new ApplicationBarMenuItem(AppResources.AppBarMenuItemText);
+            appBarMenuItem.Text = "Switch to Focus Sweep Save";
+            ApplicationBar.MenuItems.Add(appBarMenuItem);
+            appBarMenuItem.Click += appBarMenuItem_Click;
 
-        //    // Create a new button and set the text value to the localized string from AppResources.
-        //    ApplicationBarIconButton appBarButton = new ApplicationBarIconButton(new Uri("/Assets/AppBar/appbar.add.rest.png", UriKind.Relative));
-        //    appBarButton.Text = AppResources.AppBarButtonText;
-        //    ApplicationBar.Buttons.Add(appBarButton);
+            ApplicationBarMenuItem ChooseFilter = new ApplicationBarMenuItem(AppResources.AppBarMenuItemText);
+            ChooseFilter.Text = "Choose Post Process";
+            ApplicationBar.MenuItems.Add(ChooseFilter);
+            ChooseFilter.Click += ChooseFilter_Click;
 
-        //    // Create a new menu item with the localized string from AppResources.
-        //    ApplicationBarMenuItem appBarMenuItem = new ApplicationBarMenuItem(AppResources.AppBarMenuItemText);
-        //    ApplicationBar.MenuItems.Add(appBarMenuItem);
-        //}
+            ApplicationBarMenuItem ChooseFilterSize = new ApplicationBarMenuItem(AppResources.AppBarMenuItemText);
+            ChooseFilterSize.Text = "Change Filter Size";
+            ApplicationBar.MenuItems.Add(ChooseFilterSize);
+
+            ChooseFilterSize.Click += ChooseFilterSize_Click;
+            FilterSizeTextBox.GotFocus += FilterSizeTextBox_GotFocus;
+            FilterSizeTextBox.LostFocus +=FilterSizeTextBox_LostFocus;
+            FilterChoice.LostFocus += FilterChoice_LostFocus;
+        }
+
 
         private async void InitializeCamera(CameraSensorLocation sensorLocation)
         {
@@ -215,160 +237,190 @@ namespace Focus3D
 
             if (camManual != null)
             {
-                try
+                if (mode == CaptureMode.DepthMap)
                 {
-                    int w = (int)camManual.PreviewResolution.Width;
-                    int h = (int)camManual.PreviewResolution.Height;
-                    if (wb == null)
+                    try
                     {
-                        wb = new WriteableBitmap(w, h);
-                        MainImage.Width = w;
-                        MainImage.Height = h;
-                        MainImage.Source = wb;
-                    }
+                        int w = (int)camManual.PreviewResolution.Width;
+                        int h = (int)camManual.PreviewResolution.Height;
+                        if (wb == null)
+                        {
+                            wb = new WriteableBitmap(w, h);
+                            MainImage.Width = w;
+                            MainImage.Height = h;
+                            MainImage.Source = wb;
+                        }
 
-                    ShutterButton.IsEnabled = false;
+                        ShutterButton.IsEnabled = false;
+                        CameraCapturePropertyRange range = PhotoCaptureDevice.GetSupportedPropertyRange(CameraSensorLocation.Back, KnownCameraGeneralProperties.ManualFocusPosition);
+                        UInt32 max = (UInt32)range.Max;
+                        UInt32 min = (UInt32)range.Min;
+                        int selMin = 500;
+                        Dictionary<int, byte[]> buffers = new Dictionary<int, byte[]>();
+                        for (int i = selMin; i < (int)max; i += (int)(50 * (double) selMin / (i * 1.5)))
+                        {
+                            camManual.SetProperty(KnownCameraGeneralProperties.ManualFocusPosition, i);
+                            focusRange = i;
+                            buffers.Add(focusRange, new byte[(int)(camManual.PreviewResolution.Width * camManual.PreviewResolution.Height)]);
+                            await camManual.FocusAsync();
+                            camManual.GetPreviewBufferY(buffers[focusRange]);
+                        }
+                        //camManual.Dispose();
+                        KeyValuePair<short, uint[]>[] sobels = await Task.WhenAll<KeyValuePair<short, uint[]>>(
+                                buffers.Select(
+                                    pair => Task.Run(
+                                        () => new KeyValuePair<short, uint[]>((short)pair.Key, variance(pair.Value, w, h, 8, 6)))));// sobel(pair.Value, w, h) )  )));
+                        //destroy buffers
+                        buffers.Clear();
+                        buffers = null;
+                        int len = w * h;
+                        int[] maxValues = new int[len];
+                        short[] maxFocuses = new short[len];
+                        for (int i = 0; i < len; ++i)
+                        {
+                            maxValues[i] = (int)(sobels[0].Value[i] - sobels[1].Value[i]);
+                            maxFocuses[i] = 0;
+                        }
+                        //Find maximum sobel values
+                        for (int i = 1; i < sobels.Length; ++i)
+                            for (int j = 1; j < len - 1; j++)
+                            {
+                                int temp = (int)(sobels[i].Value[j] - (sobels[i].Value[j - 1] + sobels[i].Value[j + 1]) / 2);
+                                if (temp > maxValues[j])
+                                {
+                                    maxValues[j] = temp;
+                                    maxFocuses[j] = sobels[i].Key;
+                                }
+                            }
+                        //clear up some memory
+                        //maxValues = null;
+                        sobels = null;
+                        int[] dBuffer = new int[len];
+                        //Draw Depth Map
+                        double scale = 510.0 / (max - selMin);
+                        int focusColor;
+                        byte[] d;
+                        for (int i = 0; i < len; ++i)
+                        {
+                            if (maxValues[i] < 5 || maxFocuses[i] < selMin)
+                            {
+                                d = new byte[] { 0, 0, 0, 255 };
+                            }
+                            else
+                            {
+                                focusColor = (int)((double)(maxFocuses[i] - selMin) * scale);
+                               /* if (focusColor < 256)
+                                    d = new byte[] { (byte)(focusColor), (byte)(255 - focusColor), 0, 255 };
+                                else
+                                    d = new byte[] { 0, (byte)(255 - (focusColor / 2)), (byte)(focusColor / 2), 255 };
+                                */
+                                if (focusColor < 256)
+                                    d = new byte[] { (byte)(focusColor), 0, 0, 255 };
+                                else
+                                    d = new byte[] { 255, 0, (byte)(focusColor / 2), 255 };
+
+                            }
+                            dBuffer[i] = BitConverter.ToInt32(d, 0);
+                        }
+                        Deployment.Current.Dispatcher.BeginInvoke(delegate()
+                        {
+                            // Copy to WriteableBitmap.
+                            switch(FilterMode)
+                            {
+                                case FilterMethod.None:
+                                    dBuffer.CopyTo(wb.Pixels, 0);
+                                    break;
+                                case FilterMethod.Median:
+                                    dBuffer.MedianFilter(w, h, FilterSize).CopyTo(wb.Pixels, 0);
+                                    break;
+                                case FilterMethod.Salt:
+                                    dBuffer.SaltFilter(w, h, FilterSize).CopyTo(wb.Pixels, 0);
+                                    break;
+                                case FilterMethod.Interpolation:
+                                    dBuffer.CopyTo(wb.Pixels, 0);
+                                    break;
+                            }
+                            wb.Invalidate();
+                            dBuffer = null;
+                            ShutterButton.IsEnabled = true;
+                            ClearButton.Visibility = System.Windows.Visibility.Visible;
+                        });
+
+                        //InitializeCamera(CameraSensorLocation.Back);
+                        /*
+                        generateSharpnessMap(byteBuffer);
+
+                        //CAPTURE SECOND FOCUS
+                        camManual.SetProperty(KnownCameraGeneralProperties.ManualFocusPosition, focusRange + focusStep);
+                        await camManual.FocusAsync();
+                        camManual.GetPreviewBufferY(byteBuffer);
+                        for (int i = 0; i < byteBuffer.Length - 1; i++)
+                        {
+                            b[0] = byteBuffer[i];
+                            b[1] = byteBuffer[i];
+                            b[2] = byteBuffer[i];
+                            intBuffer[i] = BitConverter.ToInt32(b, 0);
+
+                        }
+                        // Save thumbnail as JPEG to the local folder.
+                        Deployment.Current.Dispatcher.BeginInvoke(delegate()
+                        {
+                            // Copy to WriteableBitmap.
+                            intBuffer.CopyTo(wb2.Pixels, 0);
+                            wb2.Invalidate();
+
+                        });
+                        generateSharpnessMap(byteBuffer);
+
+                        
+                    /*}
+                    else
+                    {
+                        
+                    }*/
+                    }
+                    catch (Exception eg)
+                    {
+
+                        throw;
+                    }
+                }
+                else
+                {
+
                     CameraCapturePropertyRange range = PhotoCaptureDevice.GetSupportedPropertyRange(CameraSensorLocation.Back, KnownCameraGeneralProperties.ManualFocusPosition);
                     UInt32 max = (UInt32)range.Max;
                     UInt32 min = (UInt32)range.Min;
 
-                    Dictionary<int, byte[]> buffers = new Dictionary<int, byte[]>();
-                    for (int i = 500; i < (int)max; i += (int)(50 * 500.0 / (i * 1.5)))
+                    List<WriteableBitmap> buffers = new List<WriteableBitmap>();
+                    int k = 0;
+                    for (int i = 500; i < (int)max; i += 20)
                     {
                         camManual.SetProperty(KnownCameraGeneralProperties.ManualFocusPosition, i);
                         focusRange = i;
-                        buffers.Add(focusRange, new byte[(int)(camManual.PreviewResolution.Width * camManual.PreviewResolution.Height)]);
+                        buffers.Add(new WriteableBitmap((int)camManual.PreviewResolution.Width, (int)camManual.PreviewResolution.Height));
                         await camManual.FocusAsync();
-                        camManual.GetPreviewBufferY(buffers[focusRange]);
+                        camManual.GetPreviewBufferArgb(buffers[k].Pixels);
+                        k++;
                     }
-                    //camManual.Dispose();
-                    KeyValuePair<short, uint[]>[] sobels = await Task.WhenAll<KeyValuePair<short, uint[]>>(
-                            buffers.Select(
-                                pair => Task.Run(
-                                    () => new KeyValuePair<short, uint[]>((short)pair.Key, variance(pair.Value, w, h, 8, 6)))));// sobel(pair.Value, w, h) )  )));
-                    //destroy buffers
-                    buffers.Clear();
-                    buffers = null;
-                    int len = w * h;
-                    int[] maxValues = new int[len];
-                    short[] maxFocuses = new short[len];
-                    for (int i = 0; i < len; ++i)
+                    k = 0;
+                    for (int i = 500; i <= max; i += 20)
                     {
-                        maxValues[i] = (int)(sobels[0].Value[i] - sobels[1].Value[i]);
-                        maxFocuses[i] = 0;
-                    }
-                    //Find maximum sobel values
-                    for (int i = 1; i < sobels.Length; ++i)
-                        for (int j = 1; j < len - 1; j++)
-                        {
-                            int temp = (int)(sobels[i].Value[j] - (sobels[i].Value[j - 1] + sobels[i].Value[j + 1]) / 2);
-                            if (temp > maxValues[j])
-                            {
-                                maxValues[j] = temp;
-                                maxFocuses[j] = sobels[i].Key;
-                            }
-                        }
-                    //clear up some memory
-                    //maxValues = null;
-                    sobels = null;
-                    int[] dBuffer = new int[len];
-                    //Draw Depth Map
-                    double scale = 255.0 / (max - 500);
-                    int focusColor;
-                    byte[] d;
-                    for (int i = 0; i < len; ++i)
-                    {
-                        if (maxValues[i] < 5 || maxFocuses[i] < 500)
-                        {
-                            d = new byte[] { 0, 0, 0, 255 };
-                        }
-                        else
-                        {
-                            focusColor = (int)((double)(maxFocuses[i] - 500.0) * scale);
-                            if (focusColor < 256)
-                                d = new byte[] { (byte)(focusColor), (byte)(255 - focusColor), 0, 255 };
-                            else
-                                d = new byte[] { 0, (byte)(255 - (focusColor / 2)), (byte)(focusColor / 2), 255 };
-
-                        }
-                        dBuffer[i] = BitConverter.ToInt32(d, 0);
-                    }
-
-                    Deployment.Current.Dispatcher.BeginInvoke(delegate()
-                    {
-                        // Copy to WriteableBitmap.
-                        dBuffer.CopyTo(wb.Pixels, 0);
-                        wb.Invalidate();
-                        dBuffer = null;
-                    });
-
-                    //InitializeCamera(CameraSensorLocation.Back);
-                    ShutterButton.IsEnabled = true;
-                    ClearButton.Visibility = System.Windows.Visibility.Visible;
-                    /*
-                    generateSharpnessMap(byteBuffer);
-
-                    //CAPTURE SECOND FOCUS
-                    camManual.SetProperty(KnownCameraGeneralProperties.ManualFocusPosition, focusRange + focusStep);
-                    await camManual.FocusAsync();
-                    camManual.GetPreviewBufferY(byteBuffer);
-                    for (int i = 0; i < byteBuffer.Length - 1; i++)
-                    {
-                        b[0] = byteBuffer[i];
-                        b[1] = byteBuffer[i];
-                        b[2] = byteBuffer[i];
-                        intBuffer[i] = BitConverter.ToInt32(b, 0);
-
-                    }
-                    // Save thumbnail as JPEG to the local folder.
-                    Deployment.Current.Dispatcher.BeginInvoke(delegate()
-                    {
-                        // Copy to WriteableBitmap.
-                        intBuffer.CopyTo(wb2.Pixels, 0);
-                        wb2.Invalidate();
-
-                    });
-                    generateSharpnessMap(byteBuffer);
-
-                        
-                /*}
-                else
-                {
-                    /*var wbitmap = new WriteableBitmap((int)camManual.PreviewResolution.Width, (int)camManual.PreviewResolution.Height);
-                    for (int i = (int)min; i <= max; i += 20)
-                    {
-                        camManual.GetPreviewBufferArgb(wbitmap.Pixels);
-                        camManual.SetProperty(KnownCameraGeneralProperties.ManualFocusPosition, i);
-                        await camManual.FocusAsync();
                         using (var stream = new MemoryStream())
                         {
-
-                            wbitmap.SaveJpeg(stream, wbitmap.PixelWidth, wbitmap.PixelHeight, 0, 100);
+                            
+                            buffers[k].SaveJpeg(stream, buffers[k].PixelWidth, buffers[k].PixelHeight, 0, 100);
                             stream.Seek(0, SeekOrigin.Begin);
-                            new MediaLibrary().SavePicture("focus_at_" + i + ".jpg", stream);
+                            new MediaLibrary().SavePicture("focus_at_" + i , stream);
+                            k++;
                         }
                     }
-                     */
-                    /*
                     //byte[] yBuffer = new byte[(int)camManual.PreviewResolution.Width * (int)camManual.PreviewResolution.Height];
                     //for (int i = 0; i < yBuffer.Length; i++)
                         //yBuffer[i] = (byte) (i/((int)camManual.PreviewResolution.Width));
                          
                     //int[] sharpnessTest = sobel(ref yBuffer, (int)camManual.PreviewResolution.Width, (int)camManual.PreviewResolution.Height);
-                    var wbitmap = new WriteableBitmap((int)camManual.PreviewResolution.Width, (int)camManual.PreviewResolution.Height);
-                    camManual.GetPreviewBufferArgb(wbitmap.Pixels);
-                    using (var stream = new MemoryStream())
-                    {
-                        wbitmap.SaveJpeg(stream, wbitmap.PixelWidth, wbitmap.PixelHeight, 0, 100);
-                        stream.Seek(0, SeekOrigin.Begin);
-                        new MediaLibrary().SavePicture("focus_at_" + focusRange + ".jpg", stream);
-                    }
-                }*/
-                }
-                catch (Exception eg)
-                {
-
-                    throw;
+                    
                 }
             }
         }
@@ -755,6 +807,66 @@ namespace Focus3D
         }
         */
 
+        public uint[] median(uint[] inArr, int w, int h, int kernel)
+        {
+            uint[] outArr = new uint[inArr.Length];
+            Dictionary<int, uint[]> buffer = new Dictionary<int, uint[]>(kernel);
+            int before = kernel/2;
+            int inside = kernel - before;
+            int i;
+            /**COPY INTO BUFFERS**/
+            for (i = 0; i < before; i++)
+            {
+                buffer.Add(i, new uint[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[0];
+                    buffer[i][j + before + w] = inArr[w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            for (i = before; i < kernel; i++)
+            {
+                buffer.Add(i, new uint[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[i*w];
+                    buffer[i][j + before + w] = inArr[i * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            /**FINISH BUFFER COPY**/
+
+            /**PERFORM OPERATION**/
+            uint[] sortList = new uint[kernel * kernel];
+            int b = 0;
+            int p, n;
+            for (i = 0; i < h; i++)
+            {
+                for (n = 0; n < w; n++)
+                {
+                    for (p = 0; p < kernel; ++p)
+                        buffer[p].SubArray(n, kernel).CopyTo(sortList, p * kernel);
+                    outArr[i * w + n] = sortList.Median();
+                }
+
+                //new buffer line
+                int iMod = Math.Min(i + kernel, h - 1); 
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[b][j] = inArr[iMod * w];
+                    buffer[b][j + before + w] = inArr[iMod * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[b][k] = inArr[iMod * w + k];
+                b = (b + 1) % kernel;
+            }
+            /**FINISH OPERATION**/
+
+            return outArr;
+        }
         private uint[] variance(byte[] inArr, int w, int h, int x, int y)
         {
             uint[] outArr = new uint[inArr.Length];
@@ -878,6 +990,319 @@ namespace Focus3D
             }
 
                 return outArr;
+        }
+
+        void FilterSizeTextBox_GotFocus(object sender, RoutedEventArgs e)
+        {
+            FilterSizeTextBox.SelectAll();
+        }
+
+        private void FilterSizeTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            FilterSize = int.Parse(FilterSizeTextBox.Text);
+            FilterSizeTextBox.Visibility = System.Windows.Visibility.Collapsed;
+        }
+
+        void ChooseFilterSize_Click(object sender, EventArgs e)
+        {
+            FilterSizeTextBox.Visibility = System.Windows.Visibility.Visible;
+            FilterSizeTextBox.Focus();
+        }
+
+        void FilterChoice_LostFocus(object sender, RoutedEventArgs e)
+        {
+            AnimateFilterListOut.Begin();
+        }
+
+        void FilterChoiceInterpolation_Tap(object sender, System.Windows.Input.GestureEventArgs e)
+        {
+            if (FilterChoice.ListPickerMode == ListPickerMode.Expanded)
+                AnimateFilterListOut.Begin();
+            FilterMode = FilterMethod.Interpolation;
+        }
+
+        void FilterChoiceNone_Tap(object sender, System.Windows.Input.GestureEventArgs e)
+        {
+            if (FilterChoice.ListPickerMode == ListPickerMode.Expanded)
+                AnimateFilterListOut.Begin();
+            FilterMode = FilterMethod.None;
+        }
+
+        void FilterChoiceSalt_Tap(object sender, System.Windows.Input.GestureEventArgs e)
+        {
+            if (FilterChoice.ListPickerMode == ListPickerMode.Expanded)
+                AnimateFilterListOut.Begin();
+            FilterMode = FilterMethod.Salt;
+        }
+
+        void FilterChoiceMedian_Tap(object sender, System.Windows.Input.GestureEventArgs e)
+        {
+            if (FilterChoice.ListPickerMode == ListPickerMode.Expanded)
+                AnimateFilterListOut.Begin();
+            FilterMode = FilterMethod.Median;
+        }
+
+        void ChooseFilter_Click(object sender, EventArgs e)
+        {
+            FilterChoice.Open();
+            AnimateFilterListIn.Begin();
+        }
+
+        void ApplicationBar_StateChanged(object sender, ApplicationBarStateChangedEventArgs e)
+        {
+            if (e.IsMenuVisible)
+                ApplicationBar.BackgroundColor = Color.FromArgb(175, 64, 64, 64);
+            else
+                ApplicationBar.BackgroundColor = Color.FromArgb(0, 64, 64, 64);
+        }
+
+        void appBarMenuItem_Click(object sender, EventArgs e)
+        {
+
+            ApplicationBarMenuItem appBarMenuItem = (ApplicationBarMenuItem)sender;
+            if (mode == CaptureMode.DepthMap)
+            {
+                mode = CaptureMode.FocusSweepSave;
+                appBarMenuItem.Text = "Switch to Depth Map Mode";
+            }
+            else
+            {
+                mode = CaptureMode.DepthMap;
+                appBarMenuItem.Text = "Switch to Focus Sweep Save";
+            }
+        }
+
+        
+    }
+
+    public static class Extensions
+    {
+        public static T[] SubArray<T>(this T[] data, int index, int length)
+        {
+            T[] result = new T[length];
+            Array.Copy(data, index, result, 0, length);
+            return result;
+        }
+
+        public static T Median<T>(this T[] data)
+        {
+            if (data.Length == 1)
+                return data[0];
+            Array.Sort(data);
+
+            return data[data.Length / 2];
+        }
+
+        public static T Median<T>(this T[] data, T avoidValue)
+        {
+            if (data.Length == 1)
+                return data[0];
+            Array.Sort(data);
+            int i = data.Length / 2;
+            T result = data[i];
+            while (i < data.Length && result.Equals(avoidValue))
+                result = data[i++];
+            return data[data.Length / 2];
+        }
+
+        public static T Salt<T>(this T[] data)
+        {
+            if (data.Length == 1)
+                return data[0];
+            Array.Sort(data);
+            return data[data.Length - 1];
+        }
+
+        public static T[] MedianFilter<T>(this T[] inArr, int w, int h, int kernel, T avoidValue)
+        {
+            if (kernel <= 1)
+                return inArr;
+            if (kernel % 2 == 0)
+                kernel++;
+            T[] outArr = new T[inArr.Length];
+            Dictionary<int, T[]> buffer = new Dictionary<int, T[]>(kernel);
+            int before = kernel / 2;
+            int i;
+            /**COPY INTO BUFFERS**/
+            for (i = 0; i < before; i++)
+            {
+                buffer.Add(i, new T[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[0];
+                    buffer[i][j + before + w] = inArr[w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            for (i = before; i < kernel; i++)
+            {
+                buffer.Add(i, new T[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[i * w];
+                    buffer[i][j + before + w] = inArr[i * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            /**FINISH BUFFER COPY**/
+
+            /**PERFORM OPERATION**/
+            T[] sortList = new T[kernel * kernel];
+            int b = 0;
+            int p, n;
+            for (i = 0; i < h; i++)
+            {
+                for (n = 0; n < w; n++)
+                {
+                    for (p = 0; p < kernel; ++p)
+                        buffer[p].SubArray(n, kernel).CopyTo(sortList, p * kernel);
+                    outArr[i * w + n] = sortList.Median(avoidValue);
+                }
+
+                //new buffer line
+                int iMod = Math.Min(i + kernel, h - 1);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[b][j] = inArr[iMod * w];
+                    buffer[b][j + before + w] = inArr[iMod * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[b][k] = inArr[iMod * w + k];
+                b = (b + 1) % kernel;
+            }
+            /**FINISH OPERATION**/
+
+            return outArr;
+        }
+
+        public static T[] MedianFilter<T>(this T[] inArr, int w, int h, int kernel)
+        {
+            if (kernel <= 1)
+                return inArr;
+            if (kernel % 2 == 0)
+                kernel++;
+            T[] outArr = new T[inArr.Length];
+            Dictionary<int, T[]> buffer = new Dictionary<int, T[]>(kernel);
+            int before = kernel / 2;
+            int i;
+            /**COPY INTO BUFFERS**/
+            for (i = 0; i < before; i++)
+            {
+                buffer.Add(i, new T[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[0];
+                    buffer[i][j + before + w] = inArr[w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            for (i = before; i < kernel; i++)
+            {
+                buffer.Add(i, new T[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[i * w];
+                    buffer[i][j + before + w] = inArr[i * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            /**FINISH BUFFER COPY**/
+
+            /**PERFORM OPERATION**/
+            T[] sortList = new T[kernel * kernel];
+            int b = 0;
+            int p, n;
+            for (i = 0; i < h; i++)
+            {
+                for (n = 0; n < w; n++)
+                {
+                    for (p = 0; p < kernel; ++p)
+                        buffer[p].SubArray(n, kernel).CopyTo(sortList, p * kernel);
+                    outArr[i * w + n] = sortList.Median();
+                }
+
+                //new buffer line
+                int iMod = Math.Min(i + kernel, h - 1);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[b][j] = inArr[iMod * w];
+                    buffer[b][j + before + w] = inArr[iMod * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[b][k] = inArr[iMod * w + k];
+                b = (b + 1) % kernel;
+            }
+            /**FINISH OPERATION**/
+
+            return outArr;
+        }
+
+        public static T[] SaltFilter<T>(this T[] inArr, int w, int h, int kernel)
+        {
+            if (kernel <= 1)
+                return inArr;
+            if (kernel % 2 == 0)
+                kernel++;
+            T[] outArr = new T[inArr.Length];
+            Dictionary<int, T[]> buffer = new Dictionary<int, T[]>(kernel);
+            int before = kernel / 2;
+            int i;
+            /**COPY INTO BUFFERS**/
+            for (i = 0; i < before; i++)
+            {
+                buffer.Add(i, new T[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[0];
+                    buffer[i][j + before + w] = inArr[w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            for (i = before; i < kernel; i++)
+            {
+                buffer.Add(i, new T[w + kernel - 1]);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[i][j] = inArr[i * w];
+                    buffer[i][j + before + w] = inArr[i * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[i][k] = inArr[i * w + k];
+            }
+            /**FINISH BUFFER COPY**/
+
+            /**PERFORM OPERATION**/
+            T[] sortList = new T[kernel * kernel];
+            int b = 0;
+            int p, n;
+            for (i = 0; i < h; i++)
+            {
+                for (n = 0; n < w; n++)
+                {
+                    for (p = 0; p < kernel; ++p)
+                        buffer[p].SubArray(n, kernel).CopyTo(sortList, p * kernel);
+                    outArr[i * w + n] = sortList.Salt();
+                }
+
+                //new buffer line
+                int iMod = Math.Min(i + kernel, h - 1);
+                for (int j = 0; j < before; j++)
+                {
+                    buffer[b][j] = inArr[iMod * w];
+                    buffer[b][j + before + w] = inArr[iMod * w + w - 1];
+                }
+                for (int k = 0; k < w; k++)
+                    buffer[b][k] = inArr[iMod * w + k];
+                b = (b + 1) % kernel;
+            }
+            /**FINISH OPERATION**/
+
+            return outArr;
         }
     }
 }
